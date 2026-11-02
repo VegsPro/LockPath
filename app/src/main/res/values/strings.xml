@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LockPath</string>
+    <string name="accessibility_service_description">LockPath needs Accessibility Service to detect and lock protected applications. Enable it to use app protection.</string>
+    <string name="disguise_calculator">Calculator</string>
+    <string name="disguise_settings">Settings</string>
+    <string name="disguise_notes">Notes</string>
+    <string name="disguise_gallery">Gallery</string>
+    <string name="disguise_chrome">Chrome</string>
+</resources>

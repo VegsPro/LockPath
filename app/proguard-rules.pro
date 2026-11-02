@@ -1,0 +1,2 @@
+-keep class com.lockpath.vegs.** { *; }
+-dontwarn androidx.security.crypto.**
