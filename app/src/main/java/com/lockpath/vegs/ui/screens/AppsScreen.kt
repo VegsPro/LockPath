@@ -1,14 +1,23 @@
 package com.lockpath.vegs.ui.screens
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.lockpath.vegs.data.AppInfo
@@ -17,7 +26,10 @@ import com.lockpath.vegs.data.AppRepository
 import com.lockpath.vegs.ui.S
 import com.lockpath.vegs.ui.components.NumericKeypad
 import com.lockpath.vegs.ui.components.PasswordField
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -159,6 +171,20 @@ private fun AppItem(
     onToggleUnique: (Boolean) -> Unit,
     onEditPassword: () -> Unit
 ) {
+    val context = LocalContext.current
+    var iconBitmap by remember(app.packageName) { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+
+    LaunchedEffect(app.packageName) {
+        iconBitmap = withContext(Dispatchers.IO) {
+            try {
+                val drawable = context.packageManager.getApplicationIcon(app.packageName)
+                drawableToBitmap(drawable)?.asImageBitmap()
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -170,6 +196,28 @@ private fun AppItem(
     ) {
         Column(Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                // App icon
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(10.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (iconBitmap != null) {
+                        Image(
+                            bitmap = iconBitmap!!,
+                            contentDescription = app.name,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Surface(
+                            modifier = Modifier.fillMaxSize(),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            shape = RoundedCornerShape(10.dp)
+                        ) {}
+                    }
+                }
+                Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
                         app.name,
@@ -203,3 +251,22 @@ private fun AppItem(
         }
     }
 }
+
+private fun drawableToBitmap(drawable: Drawable): Bitmap? {
+    return try {
+        if (drawable is BitmapDrawable && drawable.bitmap != null) {
+            drawable.bitmap
+        } else {
+            val width = if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else 96
+            val height = if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else 96
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            drawable.setBounds(0, 0, canvas.width, canvas.height)
+            drawable.draw(canvas)
+            bitmap
+        }
+    } catch (_: Exception) {
+        null
+    }
+}
+
