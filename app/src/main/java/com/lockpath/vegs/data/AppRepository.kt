@@ -28,6 +28,7 @@ class AppRepository(private val context: Context) {
         val SETUP_DONE = booleanPreferencesKey("setup_done")
         val APP_CONFIGS = stringPreferencesKey("app_configs") // JSON-like simple format
         val SALT = stringPreferencesKey("salt")
+        val COOLDOWN = intPreferencesKey("cooldown_seconds")
     }
 
     val settingsFlow: Flow<AppSettings> = dataStore.data.map { prefs ->
@@ -37,7 +38,8 @@ class AppRepository(private val context: Context) {
             isNumericKeyboard = prefs[Keys.NUMERIC_KB] ?: false,
             language = prefs[Keys.LANGUAGE] ?: "ru",
             disguiseMode = prefs[Keys.DISGUISE] ?: "none",
-            isSetupComplete = prefs[Keys.SETUP_DONE] ?: false
+            isSetupComplete = prefs[Keys.SETUP_DONE] ?: false,
+            cooldownSeconds = prefs[Keys.COOLDOWN] ?: 0
         )
     }
 
@@ -69,6 +71,10 @@ class AppRepository(private val context: Context) {
 
     suspend fun setSetupComplete(done: Boolean) {
         dataStore.edit { it[Keys.SETUP_DONE] = done }
+    }
+
+    suspend fun setCooldownSeconds(seconds: Int) {
+        dataStore.edit { it[Keys.COOLDOWN] = seconds.coerceAtLeast(0) }
     }
 
     suspend fun verifyMasterPassword(password: String): Boolean {

@@ -43,6 +43,11 @@ object S {
         val userApps: String
         val protectionOn: String
         val protectionOff: String
+        val cooldown: String
+        val cooldownDesc: String
+        val cooldownImmediate: String
+        val cooldownSeconds: String
+        val cooldownMinutes: String
     }
 
     object Ru : Lang {
@@ -85,6 +90,11 @@ object S {
         override val userApps = "Пользовательские"
         override val protectionOn = "Защита включена"
         override val protectionOff = "Защита выключена"
+        override val cooldown = "Кулдаун блокировки"
+        override val cooldownDesc = "Сколько времени приложение может быть свёрнуто, прежде чем потребуется пароль снова. 0 = блокировать сразу."
+        override val cooldownImmediate = "Сразу (0 сек)"
+        override val cooldownSeconds = "сек"
+        override val cooldownMinutes = "мин"
     }
 
     object En : Lang {
@@ -127,5 +137,10 @@ object S {
         override val userApps = "User"
         override val protectionOn = "Protection on"
         override val protectionOff = "Protection off"
+        override val cooldown = "Lock cooldown"
+        override val cooldownDesc = "How long an app can stay minimized before requiring the password again. 0 = lock immediately."
+        override val cooldownImmediate = "Immediate (0 sec)"
+        override val cooldownSeconds = "sec"
+        override val cooldownMinutes = "min"
     }
 }

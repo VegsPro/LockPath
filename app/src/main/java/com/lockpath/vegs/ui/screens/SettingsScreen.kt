@@ -122,6 +122,43 @@ fun SettingsScreen(repo: AppRepository, onBack: () -> Unit, activity: MainActivi
             HorizontalDivider()
             Spacer(Modifier.height(16.dp))
 
+            // Cooldown
+            Text(lang.cooldown, style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(4.dp))
+            Text(lang.cooldownDesc, style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(8.dp))
+            val cooldownOptions = listOf(
+                0 to lang.cooldownImmediate,
+                5 to "5 ${lang.cooldownSeconds}",
+                10 to "10 ${lang.cooldownSeconds}",
+                30 to "30 ${lang.cooldownSeconds}",
+                60 to "1 ${lang.cooldownMinutes}",
+                180 to "3 ${lang.cooldownMinutes}",
+                300 to "5 ${lang.cooldownMinutes}",
+                600 to "10 ${lang.cooldownMinutes}"
+            )
+            cooldownOptions.forEach { (seconds, label) ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                ) {
+                    RadioButton(
+                        selected = (settings?.cooldownSeconds ?: 0) == seconds,
+                        onClick = {
+                            scope.launch {
+                                repo.setCooldownSeconds(seconds)
+                                settings = repo.getSettings()
+                            }
+                        }
+                    )
+                    Text(label)
+                }
+            }
+
+            Spacer(Modifier.height(24.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(16.dp))
+
             // Passwords
             Button(onClick = { showMasterDialog = true; newPass = ""; confirmPass = "" }, modifier = Modifier.fillMaxWidth()) {
                 Text(lang.changeMaster)

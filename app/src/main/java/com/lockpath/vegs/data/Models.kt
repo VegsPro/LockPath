@@ -19,5 +19,7 @@ data class AppSettings(
     val isNumericKeyboard: Boolean = false,
     val language: String = "ru", // "ru" or "en"
     val disguiseMode: String = "none", // none, calculator, settings, notes, gallery, chrome
-    val isSetupComplete: Boolean = false
+    val isSetupComplete: Boolean = false,
+    /** Seconds the app can stay in background before requiring lock again. 0 = lock immediately. */
+    val cooldownSeconds: Int = 0
 )
