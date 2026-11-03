@@ -14,27 +14,39 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * Locks protected apps when they come to the foreground.
  *
- * After a successful unlock the package is marked as "session unlocked".
- * It will NOT be locked again until it actually leaves the foreground
- * (goes to background / another app is opened). When it leaves, the
- * cooldown timer starts. Next time it returns after the cooldown —
- * lock is shown again.
+ * Unlock flow:
+ * 1. User enters correct password → [markUnlocked] is called.
+ * 2. Short grace period (~2.5 s) so LockActivity can close without re-locking.
+ * 3. While the protected app stays in the foreground, it remains unlocked.
+ * 4. As soon as ANY other package becomes foreground (Home, another app, etc.),
+ *    the unlocked session for the previous package is cleared and cooldown starts.
+ * 5. Next time the protected app comes to foreground after cooldown → lock again.
  */
 class AppLockAccessibilityService : AccessibilityService() {
 
     companion object {
-        /** Packages that were successfully unlocked and are still in the current session. */
-        private val sessionUnlocked = ConcurrentHashMap.newKeySet<String>()
+        /** package → timestamp when it was unlocked */
+        private val unlockedAt = ConcurrentHashMap<String, Long>()
 
-        /** Call this from LockActivity after correct password. */
+        /** Grace after unlock so finishing LockActivity doesn't immediately re-lock */
+        private const val UNLOCK_GRACE_MS = 2500L
+
         fun markUnlocked(packageName: String) {
             if (packageName.isNotBlank()) {
-                sessionUnlocked.add(packageName)
+                unlockedAt[packageName] = System.currentTimeMillis()
             }
         }
 
         fun clearUnlocked(packageName: String) {
-            sessionUnlocked.remove(packageName)
+            unlockedAt.remove(packageName)
+        }
+
+        private fun isInGraceOrSession(packageName: String, now: Long = System.currentTimeMillis()): Boolean {
+            val t = unlockedAt[packageName] ?: return false
+            // Still within grace → always treat as unlocked
+            if (now - t < UNLOCK_GRACE_MS) return true
+            // After grace: only unlocked if entry still exists (cleared on leave)
+            return unlockedAt.containsKey(packageName)
         }
     }
 
@@ -48,22 +60,26 @@ class AppLockAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
-        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            event.eventType != AccessibilityEvent.TYPE_WINDOWS_CHANGED
+        ) return
 
         val packageName = event.packageName?.toString() ?: return
-        // Never react to our own windows
-        if (packageName == this.packageName) return
+        if (packageName.isBlank()) return
 
         val now = System.currentTimeMillis()
         val previous = lastForegroundPackage
 
-        // Update foreground tracking
+        // Our own UI — ignore for locking, but still track leave of previous app
+        val isOwn = packageName == this.packageName
+
         if (packageName != previous) {
             lastForegroundPackage = packageName
 
-            // Previous app left the foreground → end its unlocked session and start cooldown clock
+            // Something else came to foreground → previous app left
             if (previous != null && previous != this.packageName) {
-                sessionUnlocked.remove(previous)
+                // End unlocked session for the app that left
+                unlockedAt.remove(previous)
                 scope.launch {
                     val repo = (application as LockPathApp).repository
                     val config = repo.getAppConfig(previous)
@@ -74,19 +90,21 @@ class AppLockAccessibilityService : AccessibilityService() {
             }
         }
 
-        // Debounce
-        if (now - lastLockShownTime < 700) return
+        if (isOwn) return
 
-        // Already unlocked for this session → do nothing
-        if (sessionUnlocked.contains(packageName)) return
+        // Already unlocked for this session (or still in grace) → allow
+        if (isInGraceOrSession(packageName, now)) return
+
+        // Debounce rapid lock launches
+        if (now - lastLockShownTime < 800) return
 
         scope.launch {
             val repo = (application as LockPathApp).repository
             val config = repo.getAppConfig(packageName)
             if (!config.enabled) return@launch
 
-            // Race: user might have unlocked while we were suspended
-            if (sessionUnlocked.contains(packageName)) return@launch
+            // Re-check after suspend (user might have unlocked)
+            if (isInGraceOrSession(packageName)) return@launch
 
             val settings = repo.getSettings()
             val cooldownMs = settings.cooldownSeconds * 1000L
@@ -94,11 +112,11 @@ class AppLockAccessibilityService : AccessibilityService() {
             val elapsed = now - bgTime
 
             val shouldLock = when {
-                // Never been in background in this process → first open, always lock
+                // First open in this process (never backgrounded)
                 bgTime == 0L -> true
-                // Cooldown 0 → always lock when coming to foreground (after session ended)
+                // Cooldown 0 → lock every time the app returns after leaving
                 cooldownMs == 0L -> true
-                // Cooldown not yet expired
+                // Still inside cooldown window
                 elapsed < cooldownMs -> false
                 else -> true
             }
