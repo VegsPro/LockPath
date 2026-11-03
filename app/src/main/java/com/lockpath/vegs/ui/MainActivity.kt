@@ -9,7 +9,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -24,7 +23,6 @@ class MainActivity : ComponentActivity() {
         val repo = (application as LockPathApp).repository
         setContent {
             val settings by repo.settingsFlow.collectAsState(initial = null)
-            val lang = settings?.language ?: "ru"
             LockPathTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     if (settings == null) {
@@ -38,7 +36,7 @@ class MainActivity : ComponentActivity() {
                         NavHost(navController = navController, startDestination = startDest) {
                             composable("setup") {
                                 SetupScreen(repo = repo, onComplete = {
-                                    navController.navigate("apps") {
+                                    navController.navigate("permissions") {
                                         popUpTo("setup") { inclusive = true }
                                     }
                                 })
@@ -47,8 +45,17 @@ class MainActivity : ComponentActivity() {
                                 AuthScreen(
                                     repo = repo,
                                     onSuccess = {
-                                        navController.navigate("apps") {
+                                        navController.navigate("permissions") {
                                             popUpTo("auth") { inclusive = true }
+                                        }
+                                    }
+                                )
+                            }
+                            composable("permissions") {
+                                PermissionsScreen(
+                                    onContinue = {
+                                        navController.navigate("apps") {
+                                            popUpTo("permissions") { inclusive = true }
                                         }
                                     }
                                 )

@@ -91,14 +91,19 @@ class AppRepository(private val context: Context) {
         return hashPassword(password, salt) == settings.sharedPasswordHash
     }
 
+    /**
+     * Verify password for a protected app.
+     * Unique → unique hash; else shared; if shared empty → master (so "2000" master still works).
+     */
     suspend fun verifyAppPassword(packageName: String, password: String): Boolean {
         val config = getAppConfig(packageName)
-        return if (config.useUniquePassword && config.uniquePasswordHash.isNotEmpty()) {
+        if (config.useUniquePassword && config.uniquePasswordHash.isNotEmpty()) {
             val salt = getOrCreateSalt()
-            hashPassword(password, salt) == config.uniquePasswordHash
-        } else {
-            verifySharedPassword(password)
+            return hashPassword(password, salt) == config.uniquePasswordHash
         }
+        if (verifySharedPassword(password)) return true
+        // Fallback: master password unlocks apps when shared was never set
+        return verifyMasterPassword(password)
     }
 
     // App configs stored as "pkg|enabled|useUnique|hash;pkg2|..."
