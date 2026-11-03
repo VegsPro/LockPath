@@ -7,7 +7,7 @@ on:
 
 env:
   APP_NAME: LockPath
-  VERSION_NAME: 1.1.2
+  VERSION_NAME: 1.1.3
 
 jobs:
   build:
