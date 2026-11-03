@@ -1,9 +1,8 @@
 package com.lockpath.vegs.service
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.PixelFormat
-import android.graphics.RenderEffect
-import android.graphics.Shader
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.VibrationEffect
@@ -16,7 +15,9 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.GridLayout
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.lockpath.vegs.LockPathApp
@@ -26,11 +27,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
-/**
- * Full-screen glass lock overlay on top of the protected app.
- * Auto-verifies numeric password as digits are entered (from length 4).
- * Hides when app is minimized / Home.
- */
 class OverlayLockManager(private val context: Context) {
 
     private val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -72,6 +68,7 @@ class OverlayLockManager(private val context: Context) {
             val textInput = view.findViewById<EditText>(R.id.overlay_password_input)
             val unlockBtn = view.findViewById<Button>(R.id.overlay_unlock_btn)
             val card = view.findViewById<View>(R.id.overlay_card)
+            val root = view.findViewById<FrameLayout>(R.id.overlay_root)
 
             title.text = if (langRu) "Введите пароль" else "Enter password"
             pkgTv.text = targetPackage
@@ -79,38 +76,57 @@ class OverlayLockManager(private val context: Context) {
             unlockBtn.text = if (langRu) "Разблокировать" else "Unlock"
             textInput.hint = if (langRu) "Пароль" else "Password"
 
-            // Glass card styling (darker frosted look for readability)
             card.background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius = 28f * context.resources.displayMetrics.density
-                setColor(0x55252532.toInt())
+                setColor(0xCC1C1C24.toInt())
                 setStroke(
                     (1 * context.resources.displayMetrics.density).toInt(),
                     0x66FFFFFF
                 )
             }
 
-            // Blur content behind card on API 31+
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                try {
-                    view.setRenderEffect(
-                        RenderEffect.createBlurEffect(28f, 28f, Shader.TileMode.CLAMP)
-                    )
-                    // Blur whole root dims text — blur only a dim layer instead via window flag
-                    view.setRenderEffect(null)
-                } catch (_: Exception) {
+            // Close (X) button — top-right of full overlay
+            val density = context.resources.displayMetrics.density
+            val closeBtn = TextView(context).apply {
+                text = "✕"
+                textSize = 22f
+                setTextColor(0xFFFFFFFF.toInt())
+                gravity = Gravity.CENTER
+                val size = (44 * density).toInt()
+                val pad = (12 * density).toInt()
+                layoutParams = FrameLayout.LayoutParams(size, size).apply {
+                    gravity = Gravity.TOP or Gravity.END
+                    topMargin = (48 * density).toInt()
+                    marginEnd = (20 * density).toInt()
+                }
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(0x55FFFFFF)
+                }
+                setOnClickListener {
+                    lightTick(it)
+                    // Hide overlay and go Home so user leaves the protected app
+                    hide()
+                    AppLockAccessibilityService.clearUnlocked(targetPackage)
+                    try {
+                        val home = Intent(Intent.ACTION_MAIN).apply {
+                            addCategory(Intent.CATEGORY_HOME)
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        context.startActivity(home)
+                    } catch (_: Exception) {
+                    }
                 }
             }
+            root.addView(closeBtn)
 
             fun refreshDots() {
                 dots.removeAllViews()
                 if (!isNumeric) return
-                val density = context.resources.displayMetrics.density
                 val size = (11 * density).toInt()
                 val gap = (7 * density).toInt()
-                // Show up to 6 slots; fill according to entered length
-                val slots = 6
-                repeat(slots) { i ->
+                repeat(6) { i ->
                     val filled = i < passwordBuffer.length
                     val dot = View(context).apply {
                         layoutParams = LinearLayout.LayoutParams(size, size).apply {
@@ -131,14 +147,17 @@ class OverlayLockManager(private val context: Context) {
                 textInput.visibility = View.GONE
                 unlockBtn.visibility = View.GONE
                 keypad.visibility = View.VISIBLE
-                val keys = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "C", "0", "⌫")
-                val keySize = (62 * context.resources.displayMetrics.density).toInt()
-                val margin = (8 * context.resources.displayMetrics.density).toInt()
+                // ✓ instead of C — manual confirm
+                val keys = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "✓", "0", "⌫")
+                val keySize = (62 * density).toInt()
+                val margin = (8 * density).toInt()
                 keys.forEach { key ->
                     val btn = TextView(context).apply {
                         text = key
-                        textSize = 22f
-                        setTextColor(0xFFFFFFFF.toInt())
+                        textSize = if (key == "✓") 24f else 22f
+                        setTextColor(
+                            if (key == "✓") 0xFF81C784.toInt() else 0xFFFFFFFF.toInt()
+                        )
                         gravity = Gravity.CENTER
                         layoutParams = GridLayout.LayoutParams().apply {
                             width = keySize
@@ -150,9 +169,14 @@ class OverlayLockManager(private val context: Context) {
                             lightTick(it)
                             errorTv.visibility = View.GONE
                             when (key) {
-                                "C" -> {
-                                    passwordBuffer.clear()
-                                    refreshDots()
+                                "✓" -> {
+                                    val pass = passwordBuffer.toString()
+                                    if (pass.length >= 4) {
+                                        tryUnlock(targetPackage, pass, errorTv, showError = true)
+                                    } else {
+                                        errorTv.text = if (langRu) "Минимум 4 цифры" else "Min 4 digits"
+                                        errorTv.visibility = View.VISIBLE
+                                    }
                                 }
                                 "⌫" -> {
                                     if (passwordBuffer.isNotEmpty()) {
@@ -164,10 +188,6 @@ class OverlayLockManager(private val context: Context) {
                                     if (passwordBuffer.length < 12) {
                                         passwordBuffer.append(key)
                                         refreshDots()
-                                        // Auto-verify from 4 digits; wrong → silent
-                                        if (passwordBuffer.length >= 4 && !verifying) {
-                                            tryUnlockAuto(targetPackage, passwordBuffer.toString(), errorTv)
-                                        }
                                     }
                                 }
                             }
@@ -182,7 +202,7 @@ class OverlayLockManager(private val context: Context) {
                 unlockBtn.setOnClickListener {
                     lightTick(it)
                     val pass = textInput.text?.toString() ?: ""
-                    tryUnlockAuto(targetPackage, pass, errorTv, showError = true)
+                    tryUnlock(targetPackage, pass, errorTv, showError = true)
                 }
             }
 
@@ -198,25 +218,20 @@ class OverlayLockManager(private val context: Context) {
                 @Suppress("DEPRECATION")
                 WindowManager.LayoutParams.TYPE_PHONE
 
-            var flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
-                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
-                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
-
             val params = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
                 type,
-                flags,
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                    WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
                 PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = Gravity.TOP or Gravity.START
-                softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
             }
 
-            // Blur behind the overlay window (Android 12+)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 try {
                     params.flags = params.flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
@@ -236,11 +251,11 @@ class OverlayLockManager(private val context: Context) {
         }
     }
 
-    private fun tryUnlockAuto(
+    private fun tryUnlock(
         targetPackage: String,
         password: String,
         errorTv: TextView,
-        showError: Boolean = false
+        showError: Boolean
     ) {
         if (verifying) return
         verifying = true
@@ -252,41 +267,35 @@ class OverlayLockManager(private val context: Context) {
                     AppLockAccessibilityService.markUnlocked(targetPackage)
                     hide()
                 } else {
-                    // Silent on wrong for numeric auto-check; only show error for text mode
                     if (showError) {
                         errorTv.visibility = View.VISIBLE
-                        passwordBuffer.clear()
-                        overlayView?.findViewById<EditText>(R.id.overlay_password_input)?.text?.clear()
+                        errorTv.text = "Неверный пароль"
                     }
-                    // If reached max length, clear silently
-                    if (passwordBuffer.length >= 12) {
-                        passwordBuffer.clear()
-                        overlayView?.findViewById<LinearLayout>(R.id.overlay_dots)?.let { refreshDotsView(it) }
+                    passwordBuffer.clear()
+                    overlayView?.findViewById<LinearLayout>(R.id.overlay_dots)?.let { dots ->
+                        dots.removeAllViews()
+                        val density = context.resources.displayMetrics.density
+                        val size = (11 * density).toInt()
+                        val gap = (7 * density).toInt()
+                        repeat(6) {
+                            val dot = View(context).apply {
+                                layoutParams = LinearLayout.LayoutParams(size, size).apply {
+                                    marginStart = gap / 2
+                                    marginEnd = gap / 2
+                                }
+                                background = GradientDrawable().apply {
+                                    shape = GradientDrawable.OVAL
+                                    setColor(0x44FFFFFF)
+                                }
+                            }
+                            dots.addView(dot)
+                        }
                     }
+                    overlayView?.findViewById<EditText>(R.id.overlay_password_input)?.text?.clear()
                 }
             } finally {
                 verifying = false
             }
-        }
-    }
-
-    private fun refreshDotsView(dots: LinearLayout) {
-        dots.removeAllViews()
-        val density = context.resources.displayMetrics.density
-        val size = (11 * density).toInt()
-        val gap = (7 * density).toInt()
-        repeat(6) {
-            val dot = View(context).apply {
-                layoutParams = LinearLayout.LayoutParams(size, size).apply {
-                    marginStart = gap / 2
-                    marginEnd = gap / 2
-                }
-                background = GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    setColor(0x44FFFFFF)
-                }
-            }
-            dots.addView(dot)
         }
     }
 
@@ -345,12 +354,9 @@ class OverlayLockManager(private val context: Context) {
                 context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
             }
             if (!vibrator.hasVibrator()) return false
-            // Prefer devices that support amplitude / predefined effects (light tick)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 vibrator.hasAmplitudeControl() || Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
-            } else {
-                false // old motors are usually strong buzz — skip
-            }
+            } else false
         } catch (_: Exception) {
             false
         }

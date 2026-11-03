@@ -240,49 +240,61 @@ fun SettingsScreen(repo: AppRepository, onBack: () -> Unit, activity: MainActivi
 
     if (showMasterDialog || showSharedDialog) {
         val isMaster = showMasterDialog
-        val isNumeric = settings?.isNumericKeyboard ?: false
+        var errorMsg by remember { mutableStateOf<String?>(null) }
         AlertDialog(
             onDismissRequest = { showMasterDialog = false; showSharedDialog = false },
             title = { Text(if (isMaster) lang.changeMaster else lang.changeShared) },
             text = {
                 Column {
-                    PasswordField(value = newPass, onValueChange = { newPass = it }, label = "New", isNumeric = isNumeric)
+                    // Always text fields — numeric dual-field keypad was broken
+                    OutlinedTextField(
+                        value = newPass,
+                        onValueChange = { if (it.length <= 32) { newPass = it; errorMsg = null } },
+                        label = { Text(if (isMaster) lang.changeMaster else lang.changeShared) },
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     Spacer(Modifier.height(8.dp))
-                    PasswordField(value = confirmPass, onValueChange = { confirmPass = it }, label = lang.confirmPassword, isNumeric = isNumeric)
-                    if (isNumeric) {
-                        Spacer(Modifier.height(12.dp))
-                        NumericKeypad(
-                            onDigit = {
-                                // simple: append to focused, but for simplicity append to newPass if shorter
-                                if (newPass.length < confirmPass.length || confirmPass.isEmpty()) {
-                                    if (newPass.length < 12) newPass += it
-                                } else {
-                                    if (confirmPass.length < 12) confirmPass += it
-                                }
-                            },
-                            onBackspace = {
-                                if (confirmPass.isNotEmpty()) confirmPass = confirmPass.dropLast(1)
-                                else if (newPass.isNotEmpty()) newPass = newPass.dropLast(1)
-                            },
-                            onClear = { newPass = ""; confirmPass = "" }
-                        )
+                    OutlinedTextField(
+                        value = confirmPass,
+                        onValueChange = { if (it.length <= 32) { confirmPass = it; errorMsg = null } },
+                        label = { Text(lang.confirmPassword) },
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    errorMsg?.let {
+                        Spacer(Modifier.height(8.dp))
+                        Text(it, color = MaterialTheme.colorScheme.error)
                     }
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
-                    if (newPass.length >= 4 && newPass == confirmPass) {
-                        scope.launch {
-                            if (isMaster) repo.setMasterPassword(newPass)
-                            else repo.setSharedPassword(newPass)
-                            showMasterDialog = false
-                            showSharedDialog = false
+                    when {
+                        newPass.length < 4 -> errorMsg = lang.minLength
+                        newPass != confirmPass -> errorMsg = lang.passwordsDontMatch
+                        else -> {
+                            scope.launch {
+                                if (isMaster) repo.setMasterPassword(newPass)
+                                else repo.setSharedPassword(newPass)
+                                showMasterDialog = false
+                                showSharedDialog = false
+                                newPass = ""
+                                confirmPass = ""
+                            }
                         }
                     }
                 }) { Text(lang.save) }
             },
             dismissButton = {
-                TextButton(onClick = { showMasterDialog = false; showSharedDialog = false }) { Text(lang.cancel) }
+                TextButton(onClick = {
+                    showMasterDialog = false
+                    showSharedDialog = false
+                    newPass = ""
+                    confirmPass = ""
+                }) { Text(lang.cancel) }
             }
         )
     }
