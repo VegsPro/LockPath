@@ -1,6 +1,9 @@
 package com.lockpath.vegs.service
 
 import android.accessibilityservice.AccessibilityService
+import android.app.usage.UsageEvents
+import android.app.usage.UsageStatsManager
+import android.content.Context
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
@@ -15,19 +18,17 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Password is required only when a protected app comes to foreground
- * AFTER it was actually left (minimized / switched away).
- * While the user stays inside the app — never re-lock, regardless of cooldown.
+ * App lock via Accessibility + optional UsageStats.
+ *
+ * Password is required when a protected app becomes foreground AFTER it was left.
+ * While the user stays inside the same app — never re-lock.
  */
 class AppLockAccessibilityService : AccessibilityService() {
 
     companion object {
-        /** Packages currently allowed without password (unlocked this session). */
         private val sessionUnlocked = ConcurrentHashMap.newKeySet<String>()
-
-        /** Grace so LockActivity.finish() does not immediately re-lock. */
-        private const val UNLOCK_GRACE_MS = 2500L
         private val unlockGraceUntil = ConcurrentHashMap<String, Long>()
+        private const val UNLOCK_GRACE_MS = 2000L
 
         fun markUnlocked(packageName: String) {
             if (packageName.isBlank()) return
@@ -39,19 +40,40 @@ class AppLockAccessibilityService : AccessibilityService() {
             sessionUnlocked.remove(packageName)
             unlockGraceUntil.remove(packageName)
         }
+
+        fun clearAllSessions() {
+            sessionUnlocked.clear()
+            unlockGraceUntil.clear()
+        }
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val handler = Handler(Looper.getMainLooper())
 
-    /** Last time the user left this protected package (went to another real app / home). */
     private val lastLeftTime = ConcurrentHashMap<String, Long>()
-
     private var lastTopApp: String? = null
     private var lastLockShownTime = 0L
+    private var lastUsageCheck = 0L
 
-    private val systemPackagePrefixes = listOf(
+    /** Packages that must NEVER trigger a lock screen (IME, system UI chrome). */
+    private val neverLockPrefixes = listOf(
         "com.android.systemui",
+        "com.android.inputmethod",
+        "com.google.android.inputmethod",
+        "com.samsung.android.honeyboard",
+        "com.touchtype.swiftkey",
+        "com.github.inputmethod",
+        "com.android.permissioncontroller",
+        "com.google.android.permissioncontroller",
+        "com.android.intentresolver",
+        "com.android.bluetooth",
+        "com.android.phone",
+        "com.android.server.telecom",
+        "android"
+    )
+
+    /** Home / launcher packages — seeing these means user LEFT the previous app. */
+    private val launcherPrefixes = listOf(
         "com.android.launcher",
         "com.google.android.apps.nexuslauncher",
         "com.miui.home",
@@ -62,31 +84,26 @@ class AppLockAccessibilityService : AccessibilityService() {
         "com.huawei.android.launcher",
         "com.transsion.launcher",
         "com.nothing.launcher",
-        "com.blackberry.launcher",
         "com.teslacoilsw.launcher",
         "com.microsoft.launcher",
-        "com.android.inputmethod",
-        "com.google.android.inputmethod",
-        "com.github.inputmethod",
-        "com.samsung.android.honeyboard",
-        "com.touchtype.swiftkey",
-        "com.android.permissioncontroller",
-        "com.google.android.permissioncontroller",
-        "com.android.intentresolver",
-        "com.android.bluetooth",
-        "com.android.phone",
-        "com.android.server.telecom",
-        "com.android.settings.intelligence",
-        "android"
+        "com.bbk.launcher",
+        "com.vivo.launcher",
+        "com.realme.launcher",
+        "com.coloros.launcher",
+        "com.oneplus.launcher",
+        "com.asus.launcher",
+        "com.lge.launcher",
+        "com.sonyericsson.home",
+        "com.android.launcher2"
     )
 
     private val watchDog = object : Runnable {
         override fun run() {
             try {
-                onTopChanged(resolveTopPackage(), fromWatchdog = true)
+                pollForeground()
             } catch (_: Exception) {
             }
-            handler.postDelayed(this, 1000)
+            handler.postDelayed(this, 700)
         }
     }
 
@@ -107,80 +124,114 @@ class AppLockAccessibilityService : AccessibilityService() {
             type != AccessibilityEvent.TYPE_WINDOWS_CHANGED
         ) return
 
-        val fromEvent = event.packageName?.toString()
-        val top = resolveTopPackage() ?: fromEvent ?: return
-        onTopChanged(top, fromWatchdog = false)
+        val eventPkg = event.packageName?.toString()
+        val top = resolveTopPackage() ?: eventPkg
+        if (top != null) {
+            handleTopPackage(top)
+        }
     }
 
-    private fun onTopChanged(topPackage: String?, fromWatchdog: Boolean) {
-        if (topPackage.isNullOrBlank()) return
+    private fun pollForeground() {
+        // Accessibility windows
+        resolveTopPackage()?.let { handleTopPackage(it) }
+        // UsageStats as second source (works better on some OEMs when going Home)
+        val now = System.currentTimeMillis()
+        if (now - lastUsageCheck > 600) {
+            lastUsageCheck = now
+            queryUsageForeground()?.let { handleTopPackage(it) }
+        }
+    }
+
+    private fun handleTopPackage(topPackage: String) {
+        if (topPackage.isBlank()) return
         val now = System.currentTimeMillis()
 
-        // Ignore pure system / IME noise for "leave" detection
-        if (isIgnoredPackage(topPackage)) {
-            return
-        }
+        // IME / pure system chrome — ignore completely
+        if (isNeverLock(topPackage)) return
 
+        val isLauncher = isLauncher(topPackage)
+        val isOwn = topPackage == packageName
         val previous = lastTopApp
-        if (topPackage == previous) {
-            // Same app still on top — never lock while staying inside it
-            return
-        }
 
-        lastTopApp = topPackage
-
-        // Previous real app left the screen → end its unlock session + start cooldown clock
+        // --- LEAVE DETECTION ---
+        // User went to launcher / another app / our lock screen → previous app left
         if (previous != null &&
+            previous != topPackage &&
             previous != packageName &&
-            !isIgnoredPackage(previous)
+            !isNeverLock(previous)
         ) {
+            // End unlock session for the app that left
             sessionUnlocked.remove(previous)
             unlockGraceUntil.remove(previous)
             lastLeftTime[previous] = now
         }
 
-        // Our own LockActivity / MainActivity
-        if (topPackage == packageName) return
+        // If we see launcher — force-clear ALL sessions (user is on home screen)
+        if (isLauncher) {
+            for (pkg in sessionUnlocked.toList()) {
+                sessionUnlocked.remove(pkg)
+                unlockGraceUntil.remove(pkg)
+                lastLeftTime[pkg] = now
+            }
+            lastTopApp = topPackage
+            return
+        }
 
-        // Currently unlocked (or still in post-unlock grace)
+        if (topPackage != previous) {
+            lastTopApp = topPackage
+        }
+
+        // Our own UI — do not lock
+        if (isOwn) return
+
+        // Still unlocked this session
         if (isSessionUnlocked(topPackage, now)) return
 
-        if (now - lastLockShownTime < 1000) return
+        if (now - lastLockShownTime < 900) return
 
         scope.launch {
-            val repo = (application as LockPathApp).repository
-            val config = repo.getAppConfig(topPackage)
-            if (!config.enabled) return@launch
-            if (isSessionUnlocked(topPackage)) return@launch
-
-            val settings = repo.getSettings()
-            val cooldownMs = settings.cooldownSeconds * 1000L
-            val leftAt = lastLeftTime[topPackage] ?: 0L
-            val elapsed = now - leftAt
-
-            // Lock only if the app was left before and cooldown has passed (or cooldown=0).
-            // First launch in process (never left) → also lock.
-            val shouldLock = when {
-                leftAt == 0L -> true                          // first open
-                cooldownMs == 0L -> true                      // lock every return
-                elapsed >= cooldownMs -> true                 // cooldown expired after leave
-                else -> false                                // still inside cooldown after leave
-            }
-
-            if (shouldLock) {
-                lastLockShownTime = System.currentTimeMillis()
-                val intent = Intent(this@AppLockAccessibilityService, LockActivity::class.java).apply {
-                    addFlags(
-                        Intent.FLAG_ACTIVITY_NEW_TASK or
-                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                        Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
-                    )
-                    putExtra(LockActivity.EXTRA_PACKAGE, topPackage)
-                }
-                startActivity(intent)
-            }
+            tryLock(topPackage, now)
         }
+    }
+
+    private suspend fun tryLock(topPackage: String, now: Long) {
+        val repo = (application as LockPathApp).repository
+        val config = repo.getAppConfig(topPackage)
+        if (!config.enabled) return
+        if (isSessionUnlocked(topPackage)) return
+
+        // Double-check top package hasn't changed
+        val currentTop = resolveTopPackage() ?: queryUsageForeground()
+        if (currentTop != null && currentTop != topPackage && !isNeverLock(currentTop)) {
+            // Top already changed — don't lock stale package
+            if (isLauncher(currentTop) || currentTop != topPackage) return
+        }
+
+        val settings = repo.getSettings()
+        val cooldownMs = settings.cooldownSeconds * 1000L
+        val leftAt = lastLeftTime[topPackage] ?: 0L
+        val elapsed = now - leftAt
+
+        val shouldLock = when {
+            leftAt == 0L -> true                 // never left = first open in process
+            cooldownMs == 0L -> true             // always lock on return
+            elapsed >= cooldownMs -> true        // cooldown over after leave
+            else -> false
+        }
+
+        if (!shouldLock) return
+
+        lastLockShownTime = System.currentTimeMillis()
+        val intent = Intent(this, LockActivity::class.java).apply {
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
+            )
+            putExtra(LockActivity.EXTRA_PACKAGE, topPackage)
+        }
+        startActivity(intent)
     }
 
     private fun isSessionUnlocked(packageName: String, now: Long = System.currentTimeMillis()): Boolean {
@@ -189,10 +240,12 @@ class AppLockAccessibilityService : AccessibilityService() {
         return sessionUnlocked.contains(packageName)
     }
 
-    private fun isIgnoredPackage(pkg: String): Boolean {
-        if (pkg == packageName) return true
-        return systemPackagePrefixes.any { pkg.startsWith(it) }
-    }
+    private fun isNeverLock(pkg: String): Boolean =
+        neverLockPrefixes.any { pkg.startsWith(it) }
+
+    private fun isLauncher(pkg: String): Boolean =
+        launcherPrefixes.any { pkg.startsWith(it) } ||
+            pkg.contains("launcher", ignoreCase = true)
 
     private fun resolveTopPackage(): String? {
         try {
@@ -203,20 +256,54 @@ class AppLockAccessibilityService : AccessibilityService() {
                     if (w.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
                     val root = try { w.root } catch (_: Exception) { null } ?: continue
                     val pkg = root.packageName?.toString() ?: continue
-                    if (isIgnoredPackage(pkg) && pkg != packageName) continue
+                    if (isNeverLock(pkg)) continue
                     if (pkg == packageName) continue
                     if (w.isActive || w.isFocused) return pkg
                     if (fallback == null) fallback = pkg
                 }
                 if (fallback != null) return fallback
             }
-            return rootInActiveWindow?.packageName?.toString()
+            val rootPkg = rootInActiveWindow?.packageName?.toString()
+            if (rootPkg != null && !isNeverLock(rootPkg) && rootPkg != packageName) return rootPkg
+            return rootPkg
         } catch (_: Exception) {
             return try {
                 rootInActiveWindow?.packageName?.toString()
             } catch (_: Exception) {
                 null
             }
+        }
+    }
+
+    /**
+     * Secondary foreground detection via UsageStats.
+     * Requires PACKAGE_USAGE_STATS (user grants in settings).
+     * Especially helpful when Accessibility misses Home press on some OEMs.
+     */
+    private fun queryUsageForeground(): String? {
+        return try {
+            val usm = getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+                ?: return null
+            val end = System.currentTimeMillis()
+            val start = end - 5000
+            val events = usm.queryEvents(start, end) ?: return null
+            val event = UsageEvents.Event()
+            var lastPkg: String? = null
+            var lastTs = 0L
+            while (events.hasNextEvent()) {
+                events.getNextEvent(event)
+                if (event.eventType == UsageEvents.Event.ACTIVITY_RESUMED ||
+                    event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND
+                ) {
+                    if (event.timeStamp >= lastTs) {
+                        lastTs = event.timeStamp
+                        lastPkg = event.packageName
+                    }
+                }
+            }
+            lastPkg
+        } catch (_: Exception) {
+            null
         }
     }
 

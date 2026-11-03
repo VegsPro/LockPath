@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.provider.Settings
+import android.app.AppOpsManager
+import android.os.Process
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -65,6 +67,19 @@ fun SettingsScreen(repo: AppRepository, onBack: () -> Unit, activity: MainActivi
                 val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
                 context.startActivity(intent)
             }) { Text(lang.openAccessibility) }
+
+            Spacer(Modifier.height(16.dp))
+            Text(lang.usageAccessTitle, style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(4.dp))
+            Text(lang.usageAccessDesc, style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(8.dp))
+            Button(onClick = {
+                try {
+                    context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                } catch (_: Exception) {
+                    context.startActivity(Intent(Settings.ACTION_SETTINGS))
+                }
+            }) { Text(lang.openUsageAccess) }
 
             Spacer(Modifier.height(24.dp))
             HorizontalDivider()

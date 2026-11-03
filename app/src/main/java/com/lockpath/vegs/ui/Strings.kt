@@ -48,6 +48,9 @@ object S {
         val cooldownImmediate: String
         val cooldownSeconds: String
         val cooldownMinutes: String
+        val usageAccessTitle: String
+        val usageAccessDesc: String
+        val openUsageAccess: String
     }
 
     object Ru : Lang {
@@ -95,6 +98,9 @@ object S {
         override val cooldownImmediate = "Сразу (0 сек)"
         override val cooldownSeconds = "сек"
         override val cooldownMinutes = "мин"
+        override val usageAccessTitle = "Доступ к статистике использования"
+        override val usageAccessDesc = "Дополнительно повышает надёжность блокировки при возврате из лаунчера. Рекомендуется включить."
+        override val openUsageAccess = "Открыть доступ"
     }
 
     object En : Lang {
@@ -142,5 +148,8 @@ object S {
         override val cooldownImmediate = "Immediate (0 sec)"
         override val cooldownSeconds = "sec"
         override val cooldownMinutes = "min"
+        override val usageAccessTitle = "Usage access"
+        override val usageAccessDesc = "Improves lock reliability when returning from the home screen. Recommended."
+        override val openUsageAccess = "Open usage access"
     }
 }
