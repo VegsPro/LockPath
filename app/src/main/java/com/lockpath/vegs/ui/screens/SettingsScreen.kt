@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.provider.Settings
+import android.net.Uri
+import android.os.Build
 import android.app.AppOpsManager
 import android.os.Process
 import androidx.compose.foundation.layout.*
@@ -80,6 +82,23 @@ fun SettingsScreen(repo: AppRepository, onBack: () -> Unit, activity: MainActivi
                     context.startActivity(Intent(Settings.ACTION_SETTINGS))
                 }
             }) { Text(lang.openUsageAccess) }
+
+            Spacer(Modifier.height(16.dp))
+            Text(lang.overlayTitle, style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(4.dp))
+            Text(lang.overlayDesc, style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(8.dp))
+            Button(onClick = {
+                try {
+                    val intent = Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:${context.packageName}")
+                    )
+                    context.startActivity(intent)
+                } catch (_: Exception) {
+                    context.startActivity(Intent(Settings.ACTION_SETTINGS))
+                }
+            }) { Text(lang.openOverlay) }
 
             Spacer(Modifier.height(24.dp))
             HorizontalDivider()

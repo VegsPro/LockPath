@@ -5,12 +5,13 @@ import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import com.lockpath.vegs.LockPathApp
-import com.lockpath.vegs.ui.LockActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -18,17 +19,15 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * App lock via Accessibility + optional UsageStats.
- *
- * Password is required when a protected app becomes foreground AFTER it was left.
- * While the user stays inside the same app — never re-lock.
+ * Detects protected apps and shows/hides an OVERLAY lock on top of them.
+ * Overlay is hidden when the app is minimized and shown again when it returns.
  */
 class AppLockAccessibilityService : AccessibilityService() {
 
     companion object {
         private val sessionUnlocked = ConcurrentHashMap.newKeySet<String>()
         private val unlockGraceUntil = ConcurrentHashMap<String, Long>()
-        private const val UNLOCK_GRACE_MS = 2000L
+        private const val UNLOCK_GRACE_MS = 1800L
 
         fun markUnlocked(packageName: String) {
             if (packageName.isBlank()) return
@@ -49,20 +48,19 @@ class AppLockAccessibilityService : AccessibilityService() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val handler = Handler(Looper.getMainLooper())
+    private lateinit var overlay: OverlayLockManager
 
     private val lastLeftTime = ConcurrentHashMap<String, Long>()
     private var lastTopApp: String? = null
     private var lastLockShownTime = 0L
     private var lastUsageCheck = 0L
 
-    /** Packages that must NEVER trigger a lock screen (IME, system UI chrome). */
     private val neverLockPrefixes = listOf(
         "com.android.systemui",
         "com.android.inputmethod",
         "com.google.android.inputmethod",
         "com.samsung.android.honeyboard",
         "com.touchtype.swiftkey",
-        "com.github.inputmethod",
         "com.android.permissioncontroller",
         "com.google.android.permissioncontroller",
         "com.android.intentresolver",
@@ -72,7 +70,6 @@ class AppLockAccessibilityService : AccessibilityService() {
         "android"
     )
 
-    /** Home / launcher packages — seeing these means user LEFT the previous app. */
     private val launcherPrefixes = listOf(
         "com.android.launcher",
         "com.google.android.apps.nexuslauncher",
@@ -84,36 +81,30 @@ class AppLockAccessibilityService : AccessibilityService() {
         "com.huawei.android.launcher",
         "com.transsion.launcher",
         "com.nothing.launcher",
-        "com.teslacoilsw.launcher",
-        "com.microsoft.launcher",
         "com.bbk.launcher",
         "com.vivo.launcher",
         "com.realme.launcher",
         "com.coloros.launcher",
         "com.oneplus.launcher",
-        "com.asus.launcher",
-        "com.lge.launcher",
-        "com.sonyericsson.home",
-        "com.android.launcher2"
+        "com.asus.launcher"
     )
 
     private val watchDog = object : Runnable {
         override fun run() {
-            try {
-                pollForeground()
-            } catch (_: Exception) {
-            }
-            handler.postDelayed(this, 700)
+            try { pollForeground() } catch (_: Exception) {}
+            handler.postDelayed(this, 600)
         }
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        overlay = OverlayLockManager(this)
         handler.post(watchDog)
     }
 
     override fun onDestroy() {
         handler.removeCallbacks(watchDog)
+        try { overlay.hide() } catch (_: Exception) {}
         super.onDestroy()
     }
 
@@ -123,20 +114,15 @@ class AppLockAccessibilityService : AccessibilityService() {
         if (type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
             type != AccessibilityEvent.TYPE_WINDOWS_CHANGED
         ) return
-
         val eventPkg = event.packageName?.toString()
         val top = resolveTopPackage() ?: eventPkg
-        if (top != null) {
-            handleTopPackage(top)
-        }
+        if (top != null) handleTopPackage(top)
     }
 
     private fun pollForeground() {
-        // Accessibility windows
         resolveTopPackage()?.let { handleTopPackage(it) }
-        // UsageStats as second source (works better on some OEMs when going Home)
         val now = System.currentTimeMillis()
-        if (now - lastUsageCheck > 600) {
+        if (now - lastUsageCheck > 500) {
             lastUsageCheck = now
             queryUsageForeground()?.let { handleTopPackage(it) }
         }
@@ -145,66 +131,59 @@ class AppLockAccessibilityService : AccessibilityService() {
     private fun handleTopPackage(topPackage: String) {
         if (topPackage.isBlank()) return
         val now = System.currentTimeMillis()
-
-        // IME / pure system chrome — ignore completely
         if (isNeverLock(topPackage)) return
 
         val isLauncher = isLauncher(topPackage)
         val isOwn = topPackage == packageName
         val previous = lastTopApp
 
-        // --- LEAVE DETECTION ---
-        // User went to launcher / another app / our lock screen → previous app left
-        if (previous != null &&
-            previous != topPackage &&
-            previous != packageName &&
-            !isNeverLock(previous)
-        ) {
-            // End unlock session for the app that left
+        // --- LEAVE ---
+        if (previous != null && previous != topPackage && previous != packageName && !isNeverLock(previous)) {
             sessionUnlocked.remove(previous)
             unlockGraceUntil.remove(previous)
             lastLeftTime[previous] = now
+            // Hide overlay when leaving the protected app
+            overlay.hideIfPackage(previous)
         }
 
-        // If we see launcher — force-clear ALL sessions (user is on home screen)
         if (isLauncher) {
+            // On home: clear all sessions and hide overlay
             for (pkg in sessionUnlocked.toList()) {
                 sessionUnlocked.remove(pkg)
                 unlockGraceUntil.remove(pkg)
                 lastLeftTime[pkg] = now
             }
+            overlay.hide()
             lastTopApp = topPackage
             return
         }
 
-        if (topPackage != previous) {
-            lastTopApp = topPackage
-        }
-
-        // Our own UI — do not lock
+        if (topPackage != previous) lastTopApp = topPackage
         if (isOwn) return
 
-        // Still unlocked this session
-        if (isSessionUnlocked(topPackage, now)) return
+        // Already unlocked this session → ensure overlay hidden
+        if (isSessionUnlocked(topPackage, now)) {
+            overlay.hideIfPackage(topPackage)
+            return
+        }
 
-        if (now - lastLockShownTime < 900) return
+        if (now - lastLockShownTime < 700) return
 
         scope.launch {
-            tryLock(topPackage, now)
+            tryShowLock(topPackage, now)
         }
     }
 
-    private suspend fun tryLock(topPackage: String, now: Long) {
+    private suspend fun tryShowLock(topPackage: String, now: Long) {
         val repo = (application as LockPathApp).repository
         val config = repo.getAppConfig(topPackage)
-        if (!config.enabled) return
-        if (isSessionUnlocked(topPackage)) return
-
-        // Double-check top package hasn't changed
-        val currentTop = resolveTopPackage() ?: queryUsageForeground()
-        if (currentTop != null && currentTop != topPackage && !isNeverLock(currentTop)) {
-            // Top already changed — don't lock stale package
-            if (isLauncher(currentTop) || currentTop != topPackage) return
+        if (!config.enabled) {
+            overlay.hideIfPackage(topPackage)
+            return
+        }
+        if (isSessionUnlocked(topPackage)) {
+            overlay.hideIfPackage(topPackage)
+            return
         }
 
         val settings = repo.getSettings()
@@ -213,25 +192,25 @@ class AppLockAccessibilityService : AccessibilityService() {
         val elapsed = now - leftAt
 
         val shouldLock = when {
-            leftAt == 0L -> true                 // never left = first open in process
-            cooldownMs == 0L -> true             // always lock on return
-            elapsed >= cooldownMs -> true        // cooldown over after leave
+            leftAt == 0L -> true
+            cooldownMs == 0L -> true
+            elapsed >= cooldownMs -> true
             else -> false
         }
 
-        if (!shouldLock) return
+        if (!shouldLock) {
+            overlay.hideIfPackage(topPackage)
+            return
+        }
+
+        // Need overlay permission
+        if (!Settings.canDrawOverlays(this)) {
+            // Fallback: cannot show overlay — user must grant permission
+            return
+        }
 
         lastLockShownTime = System.currentTimeMillis()
-        val intent = Intent(this, LockActivity::class.java).apply {
-            addFlags(
-                Intent.FLAG_ACTIVITY_NEW_TASK or
-                Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
-            )
-            putExtra(LockActivity.EXTRA_PACKAGE, topPackage)
-        }
-        startActivity(intent)
+        overlay.show(topPackage)
     }
 
     private fun isSessionUnlocked(packageName: String, now: Long = System.currentTimeMillis()): Boolean {
@@ -240,12 +219,10 @@ class AppLockAccessibilityService : AccessibilityService() {
         return sessionUnlocked.contains(packageName)
     }
 
-    private fun isNeverLock(pkg: String): Boolean =
-        neverLockPrefixes.any { pkg.startsWith(it) }
+    private fun isNeverLock(pkg: String) = neverLockPrefixes.any { pkg.startsWith(it) }
 
-    private fun isLauncher(pkg: String): Boolean =
-        launcherPrefixes.any { pkg.startsWith(it) } ||
-            pkg.contains("launcher", ignoreCase = true)
+    private fun isLauncher(pkg: String) =
+        launcherPrefixes.any { pkg.startsWith(it) } || pkg.contains("launcher", ignoreCase = true)
 
     private fun resolveTopPackage(): String? {
         try {
@@ -263,30 +240,17 @@ class AppLockAccessibilityService : AccessibilityService() {
                 }
                 if (fallback != null) return fallback
             }
-            val rootPkg = rootInActiveWindow?.packageName?.toString()
-            if (rootPkg != null && !isNeverLock(rootPkg) && rootPkg != packageName) return rootPkg
-            return rootPkg
+            return rootInActiveWindow?.packageName?.toString()
         } catch (_: Exception) {
-            return try {
-                rootInActiveWindow?.packageName?.toString()
-            } catch (_: Exception) {
-                null
-            }
+            return try { rootInActiveWindow?.packageName?.toString() } catch (_: Exception) { null }
         }
     }
 
-    /**
-     * Secondary foreground detection via UsageStats.
-     * Requires PACKAGE_USAGE_STATS (user grants in settings).
-     * Especially helpful when Accessibility misses Home press on some OEMs.
-     */
     private fun queryUsageForeground(): String? {
         return try {
-            val usm = getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
-                ?: return null
+            val usm = getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager ?: return null
             val end = System.currentTimeMillis()
-            val start = end - 5000
-            val events = usm.queryEvents(start, end) ?: return null
+            val events = usm.queryEvents(end - 4000, end) ?: return null
             val event = UsageEvents.Event()
             var lastPkg: String? = null
             var lastTs = 0L

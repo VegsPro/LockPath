@@ -51,6 +51,9 @@ object S {
         val usageAccessTitle: String
         val usageAccessDesc: String
         val openUsageAccess: String
+        val overlayTitle: String
+        val overlayDesc: String
+        val openOverlay: String
     }
 
     object Ru : Lang {
@@ -101,6 +104,9 @@ object S {
         override val usageAccessTitle = "Доступ к статистике использования"
         override val usageAccessDesc = "Дополнительно повышает надёжность блокировки при возврате из лаунчера. Рекомендуется включить."
         override val openUsageAccess = "Открыть доступ"
+        override val overlayTitle = "Поверх других окон"
+        override val overlayDesc = "Блокировка показывается поверх приложения. Обязательно включите."
+        override val openOverlay = "Разрешить оверлей"
     }
 
     object En : Lang {
@@ -151,5 +157,8 @@ object S {
         override val usageAccessTitle = "Usage access"
         override val usageAccessDesc = "Improves lock reliability when returning from the home screen. Recommended."
         override val openUsageAccess = "Open usage access"
+        override val overlayTitle = "Display over other apps"
+        override val overlayDesc = "Lock is shown as an overlay on top of the app. Required."
+        override val openOverlay = "Allow overlay"
     }
 }
