@@ -3,48 +3,59 @@
     android:id="@+id/overlay_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#E6121212"
     android:clickable="true"
-    android:focusable="true">
+    android:focusable="true"
+    android:background="#66000000">
 
+    <!-- Glass card -->
     <LinearLayout
+        android:id="@+id/overlay_card"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="center"
+        android:layout_marginStart="28dp"
+        android:layout_marginEnd="28dp"
         android:gravity="center_horizontal"
         android:orientation="vertical"
-        android:padding="24dp">
+        android:paddingTop="28dp"
+        android:paddingBottom="28dp"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:background="@drawable/bg_glass_card"
+        android:elevation="12dp">
 
         <ImageView
-            android:layout_width="64dp"
-            android:layout_height="64dp"
+            android:id="@+id/overlay_lock_icon"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
             android:src="@android:drawable/ic_lock_lock"
             android:contentDescription="@null"
-            android:tint="#9FA8DA" />
+            android:tint="#E8EAF6" />
 
         <TextView
             android:id="@+id/overlay_title"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
+            android:layout_marginTop="14dp"
             android:text="Введите пароль"
             android:textColor="#FFFFFF"
-            android:textSize="22sp"
-            android:textStyle="bold" />
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.02" />
 
         <TextView
             android:id="@+id/overlay_package"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:textColor="#AAAAAA"
-            android:textSize="12sp" />
+            android:textColor="#99FFFFFF"
+            android:textSize="11sp" />
 
         <LinearLayout
             android:id="@+id/overlay_dots"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
+            android:layout_marginTop="22dp"
             android:orientation="horizontal"
             android:gravity="center" />
 
@@ -52,23 +63,20 @@
             android:id="@+id/overlay_error"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:textColor="#FF5252"
-            android:textSize="14sp"
+            android:layout_marginTop="10dp"
+            android:textColor="#FF8A80"
+            android:textSize="13sp"
             android:visibility="gone" />
 
-        <!-- Numeric keypad container -->
         <GridLayout
             android:id="@+id/overlay_keypad"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
+            android:layout_marginTop="18dp"
             android:columnCount="3"
             android:rowCount="4"
-            android:alignmentMode="alignMargins"
-            android:useDefaultMargins="true" />
+            android:alignmentMode="alignMargins" />
 
-        <!-- Text password field (when not numeric) -->
         <EditText
             android:id="@+id/overlay_password_input"
             android:layout_width="match_parent"
@@ -77,15 +85,15 @@
             android:hint="Пароль"
             android:inputType="textPassword"
             android:textColor="#FFFFFF"
-            android:textColorHint="#888888"
-            android:backgroundTint="#9FA8DA"
+            android:textColorHint="#66FFFFFF"
+            android:backgroundTint="#B0BEC5"
             android:visibility="gone" />
 
         <Button
             android:id="@+id/overlay_unlock_btn"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
+            android:layout_marginTop="12dp"
             android:text="Разблокировать"
             android:visibility="gone" />
     </LinearLayout>

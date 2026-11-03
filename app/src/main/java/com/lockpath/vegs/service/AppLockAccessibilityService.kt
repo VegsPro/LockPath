@@ -147,15 +147,24 @@ class AppLockAccessibilityService : AccessibilityService() {
         }
 
         if (isLauncher) {
-            // On home: clear all sessions and hide overlay
+            // On home: clear all sessions and ALWAYS hide overlay
             for (pkg in sessionUnlocked.toList()) {
                 sessionUnlocked.remove(pkg)
                 unlockGraceUntil.remove(pkg)
                 lastLeftTime[pkg] = now
             }
-            overlay.hide()
+            overlay.forceHide()
             lastTopApp = topPackage
             return
+        }
+
+        // If overlay is showing but top package is no longer that app → hide
+        val shown = overlay.shownPackage
+        if (overlay.isShowing && shown != null && shown != topPackage && !isOwn) {
+            sessionUnlocked.remove(shown)
+            unlockGraceUntil.remove(shown)
+            lastLeftTime[shown] = now
+            overlay.forceHide()
         }
 
         if (topPackage != previous) lastTopApp = topPackage
