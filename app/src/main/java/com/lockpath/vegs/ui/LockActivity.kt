@@ -13,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.lockpath.vegs.LockPathApp
+import com.lockpath.vegs.service.AppLockAccessibilityService
 import com.lockpath.vegs.ui.components.NumericKeypad
 import com.lockpath.vegs.ui.components.PasswordField
 import com.lockpath.vegs.ui.theme.LockPathTheme
@@ -33,7 +34,18 @@ class LockActivity : ComponentActivity() {
         setContent {
             LockPathTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    LockContent(repo = repo, targetPackage = targetPackage, onUnlock = { finish() })
+                    LockContent(
+                        repo = repo,
+                        targetPackage = targetPackage,
+                        onUnlock = {
+                            // Mark as unlocked for the current session so AccessibilityService
+                            // does not immediately re-lock when this activity finishes.
+                            if (targetPackage.isNotBlank()) {
+                                AppLockAccessibilityService.markUnlocked(targetPackage)
+                            }
+                            finish()
+                        }
+                    )
                 }
             }
         }
